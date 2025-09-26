@@ -2,9 +2,10 @@ pipeline {
   agent any
 
   environment {
-    // If you left "Allowed Domains" empty, set any email here (e.g. your address).
+    // If "Allowed Domains" is empty you can put any address here.
     // If you set "Allowed Domains" = example.com, keep to@example.com.
     EMAIL_TO = 'to@example.com'
+    SMTP_ACCOUNT = 'mailtrap'   // <-- the name you gave in SMTP Accounts
   }
 
   options { timestamps() }
@@ -24,7 +25,7 @@ pipeline {
 
     stage('Run Tests') {
       steps {
-        // keep pipeline running even if tests fail, so we still email
+        // keep pipeline going even if tests fail so we still send email
         catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
           bat 'npm test || exit /b 0'
         }
@@ -32,6 +33,7 @@ pipeline {
       post {
         success {
           emailext(
+            account: env.SMTP_ACCOUNT,
             to: env.EMAIL_TO,
             subject: "[Run Tests ✅] SUCCESS - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
             body: """<p><b>Result:</b> ${currentBuild.currentResult}</p>
@@ -45,6 +47,7 @@ pipeline {
         }
         failure {
           emailext(
+            account: env.SMTP_ACCOUNT,
             to: env.EMAIL_TO,
             subject: "[Run Tests ❌] FAILURE - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
             body: """<p><b>Result:</b> ${currentBuild.currentResult}</p>
@@ -61,7 +64,7 @@ pipeline {
 
     stage('Generate Coverage Report') {
       steps {
-        // optional; won't fail build if script not present
+        // optional; won’t fail build if script not present
         catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
           bat 'npm run coverage || exit /b 0'
         }
@@ -78,6 +81,7 @@ pipeline {
       post {
         success {
           emailext(
+            account: env.SMTP_ACCOUNT,
             to: env.EMAIL_TO,
             subject: "[Security Scan 🔐] SUCCESS - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
             body: """<p><b>Result:</b> ${currentBuild.currentResult}</p>
@@ -91,6 +95,7 @@ pipeline {
         }
         failure {
           emailext(
+            account: env.SMTP_ACCOUNT,
             to: env.EMAIL_TO,
             subject: "[Security Scan 🔐] FAILURE - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
             body: """<p><b>Result:</b> ${currentBuild.currentResult}</p>
