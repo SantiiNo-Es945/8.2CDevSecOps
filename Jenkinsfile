@@ -1,14 +1,12 @@
 pipeline {
   agent any
+  options { timestamps() }
 
   environment {
-    // If "Allowed Domains" is empty you can put any address here.
-    // If you set "Allowed Domains" = example.com, keep to@example.com.
-    EMAIL_TO = 'to@example.com'
-    SMTP_ACCOUNT = 'mailtrap'   // <-- the name you gave in SMTP Accounts
+    // REPLACE these with your real keys from SonarCloud
+    SONAR_ORG     = '<YOUR_ORG_KEY>'
+    SONAR_PROJECT = '<YOUR_PROJECT_KEY>'
   }
-
-  options { timestamps() }
 
   stages {
     stage('Checkout') {
@@ -18,100 +16,47 @@ pipeline {
     }
 
     stage('Install Dependencies') {
-      steps {
-        bat 'npm install'
-      }
+      steps { bat 'npm install' }
     }
 
-    stage('Run Tests') {
-      steps {
-        // keep pipeline going even if tests fail so we still send email
-        catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-          bat 'npm test || exit /b 0'
-        }
-      }
+    stage('Test with coverage') {
+      steps { bat 'npm test -- --coverage || exit /b 0' }
       post {
-        success {
-          emailext(
-            account: env.SMTP_ACCOUNT,
-            to: env.EMAIL_TO,
-            subject: "[Run Tests ✅] SUCCESS - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-            body: """<p><b>Result:</b> ${currentBuild.currentResult}</p>
-                     <p><b>Job:</b> ${env.JOB_NAME}</p>
-                     <p><b>Build:</b> ${env.BUILD_NUMBER}</p>
-                     <p><b>Console:</b> <a href="${env.BUILD_URL}">${env.BUILD_URL}</a></p>""",
-            mimeType: 'text/html',
-            attachLog: true,
-            compressLog: true
-          )
-        }
-        failure {
-          emailext(
-            account: env.SMTP_ACCOUNT,
-            to: env.EMAIL_TO,
-            subject: "[Run Tests ❌] FAILURE - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-            body: """<p><b>Result:</b> ${currentBuild.currentResult}</p>
-                     <p><b>Job:</b> ${env.JOB_NAME}</p>
-                     <p><b>Build:</b> ${env.BUILD_NUMBER}</p>
-                     <p><b>Console:</b> <a href="${env.BUILD_URL}">${env.BUILD_URL}</a></p>""",
-            mimeType: 'text/html',
-            attachLog: true,
-            compressLog: true
-          )
+        always {
+          // just to verify coverage file exists
+          bat 'if exist coverage\\lcov.info (echo Found coverage\\lcov.info) else (echo NO coverage\\lcov.info)'
         }
       }
     }
 
-    stage('Generate Coverage Report') {
+    // ------- SONARCLOUD -------
+    stage('SonarCloud Scan') {
       steps {
-        // optional; won’t fail build if script not present
-        catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-          bat 'npm run coverage || exit /b 0'
-        }
-      }
-    }
+        script {
+          // Make sure Global Tool: SonarQube Scanner is named exactly "SonarScanner"
+          def scannerHome = tool name: 'SonarScanner', type: 'hudson.plugins.sonar.SonarRunnerInstallation'
 
-    stage('NPM Audit (Security Scan)') {
-      steps {
-        // continue even if audit exits non-zero
-        catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-          bat 'npm audit || exit /b 0'
-        }
-      }
-      post {
-        success {
-          emailext(
-            account: env.SMTP_ACCOUNT,
-            to: env.EMAIL_TO,
-            subject: "[Security Scan 🔐] SUCCESS - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-            body: """<p><b>Result:</b> ${currentBuild.currentResult}</p>
-                     <p><b>Job:</b> ${env.JOB_NAME}</p>
-                     <p><b>Build:</b> ${env.BUILD_NUMBER}</p>
-                     <p><b>Console:</b> <a href="${env.BUILD_URL}">${env.BUILD_URL}</a></p>""",
-            mimeType: 'text/html',
-            attachLog: true,
-            compressLog: true
-          )
-        }
-        failure {
-          emailext(
-            account: env.SMTP_ACCOUNT,
-            to: env.EMAIL_TO,
-            subject: "[Security Scan 🔐] FAILURE - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-            body: """<p><b>Result:</b> ${currentBuild.currentResult}</p>
-                     <p><b>Job:</b> ${env.JOB_NAME}</p>
-                     <p><b>Build:</b> ${env.BUILD_NUMBER}</p>
-                     <p><b>Console:</b> <a href="${env.BUILD_URL}">${env.BUILD_URL}</a></p>""",
-            mimeType: 'text/html',
-            attachLog: true,
-            compressLog: true
-          )
+          // Use your Secret Text credential ID = SONAR_TOKEN (Manage Jenkins → Credentials)
+          withCredentials([string(credentialsId: 'SONAR_TOKEN', variable: 'SONAR_TOKEN')]) {
+            // Run scan and WAIT for Quality Gate, but DO NOT fail the build even if gate fails
+            catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+              bat """
+                "${scannerHome}\\bin\\sonar-scanner.bat" ^
+                  -D"sonar.host.url=https://sonarcloud.io" ^
+                  -D"sonar.organization=%SONAR_ORG%" ^
+                  -D"sonar.projectKey=%SONAR_PROJECT%" ^
+                  -D"sonar.sources=." ^
+                  -D"sonar.exclusions=**/node_modules/**" ^
+                  -D"sonar.javascript.lcov.reportPaths=coverage/lcov.info" ^
+                  -D"sonar.token=%SONAR_TOKEN%" ^
+                  -D"sonar.qualitygate.wait=true"
+              """
+            }
+          }
         }
       }
     }
   }
 
-  post {
-    always { echo "Build result: ${currentBuild.currentResult}" }
-  }
+  post { always { echo 'Done. Check SonarCloud for analysis + Quality Gate.' } }
 }
